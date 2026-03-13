@@ -36,4 +36,8 @@ target_include_directories(scara_planner PRIVATE
   ${CMAKE_SOURCE_DIR}/src
   ${CMAKE_SOURCE_DIR}/third_party/scara
 )
+target_include_directories(scara_scheduler PRIVATE 
+  ${CMAKE_SOURCE_DIR}/include 
+)
+
 

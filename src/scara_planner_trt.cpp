@@ -4,6 +4,8 @@
 
 #include <fmt/format.h>
 
+/*所有函数的功能同scara_planner_bl.cpp*/
+
 void ScaraPlanner::startTRTSegment(size_t seg_idx) {
     for (int i = 0; i < 4; ++i) {
         auto &tp = robomotion.trajectoryplanners[i];
@@ -18,10 +20,10 @@ void ScaraPlanner::startTRTSegment(size_t seg_idx) {
 }
 
 bool ScaraPlanner::resetTRTTraj() {
-    std::array<double, 4> q_place{}, q_tighten{};
+    std::array<double, 4> q_tighten{}, q_home{}, q_tighten_safe{};
 
-    if (!cartToq(cfg::kPlace.x, cfg::kPlace.y, cfg::kPlace.z, cfg::kPlace.r_deg, q_place)) {
-        fmt::println("[planner] IK fail: place");
+    if (!cartToq(cfg::kHome.x, cfg::kHome.y, cfg::kHome.z, cfg::kHome.r_deg, q_home)) {
+        fmt::println("[planner] IK fail: home");
         return false;
     }
 
@@ -30,10 +32,21 @@ bool ScaraPlanner::resetTRTTraj() {
         return false;
     }
 
+    if (!cartToq(cfg::kTighten.x, cfg::kTighten.y, cfg::kSafeZ, cfg::kTighten.r_deg, q_tighten_safe)) {
+        fmt::println("[planner] IK fail: thread ring tighten safe");
+        return false;
+    }
+
     _trt_path = {
-        q_place,
-        q_tighten,
-        q_place};
+        // q_home,
+        q_tighten_safe,
+        q_tighten, /*dwell*/
+        q_tighten_safe,
+        // q_home
+    };
+    _dwelling = false;
+    _dwell_ticks_left = 0;
+    _dwell_q = {0.0, 0.0, 0.0, 0.0};
 
     _seg_idx = 0;
     startTRTSegment(_seg_idx);
@@ -44,8 +57,16 @@ bool ScaraPlanner::resetTRTTraj() {
     当前段计算完成后，段号加1，然后开启下一段：startSegment   */
 std::array<double, 4> ScaraPlanner::sampleTRTNextQ() {
 
+    if (_dwelling) {
+        if (_dwell_ticks_left > 0) {
+            --_dwell_ticks_left;
+            return _dwell_q;
+        }
+        _dwelling = false;
+    }
+
     if (_seg_idx + 1 >= _trt_path.size()) {
-        _running.store(false, std::memory_order_relaxed);
+        _running = false;
         _task_mode = TaskMode::Idle;
         return _trt_path.back(); // 保持在最后一个路径点
     }
@@ -63,10 +84,18 @@ std::array<double, 4> ScaraPlanner::sampleTRTNextQ() {
 
     if (done) {
         _seg_idx++;
+
+        // 到达工艺点后先停 3s，再继续下一段
+        if (_seg_idx == 2) {
+            _dwelling = true;
+            _dwell_ticks_left = static_cast<int>(cfg::kWorkDwell / cfg::kPubPeriod);
+            _dwell_q = _trt_path[_seg_idx];
+        }
+
         if (_seg_idx + 1 < _trt_path.size()) {
             startTRTSegment(_seg_idx);
         } else {
-            _running.store(false, std::memory_order_relaxed);
+            _running = false;
             _task_mode = TaskMode::Idle;
         }
     }

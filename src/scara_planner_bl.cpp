@@ -8,33 +8,73 @@
     初始化第一段路径，类似于在地图上绘制总路线*/
 bool ScaraPlanner::resetBLTraj() {
 
-    std::array<double, 4> q_pick{}, q_place{}, q_pick_safe{}, q_place_safe{};
+    std::array<double, 4>
+        q_home{},       /* home位置逆解 */
+        q_pickL{},      /* 上料台逆解 */
+        q_pickU{},      /* 下料台逆解 */
+        q_place{},      /* 工作台逆解 */
+        q_pickL_safe{}, /* 上料台安全位置逆解 */
+        q_pickU_safe{}, /* 下料台安全位置逆解 */
+        q_place_safe{}; /* 工作台安全位置逆解 */
 
-    if (!cartToq(cfg::kPick.x, cfg::kPick.y, cfg::kPick.z, cfg::kPick.r_deg, q_pick)) {
-        fmt::println("[planner] IK fail: pick");
+    if (!cartToq(cfg::kHome.x, cfg::kHome.y, cfg::kHome.z, cfg::kHome.r_deg, q_home)) {
+        fmt::println("[planner] IK fail: home");
         return false;
     }
-    if (!cartToq(cfg::kPick.x, cfg::kPick.y, cfg::kSafeZ, cfg::kPick.r_deg, q_pick_safe)) {
-        fmt::println("[planner] IK fail: pick_safe");
+
+    if (!cartToq(cfg::kPickL.x, cfg::kPickL.y, cfg::kPickL.z, cfg::kPickL.r_deg, q_pickL)) {
+        fmt::println("[planner] IK fail: pickL");
         return false;
     }
+
+    if (!cartToq(cfg::kPickU.x, cfg::kPickU.y, cfg::kPickU.z, cfg::kPickU.r_deg, q_pickU)) {
+        fmt::println("[planner] IK fail: pickU");
+        return false;
+    }
+
+    if (!cartToq(cfg::kPickL.x, cfg::kPickL.y, cfg::kSafeZ, cfg::kPickL.r_deg, q_pickL_safe)) {
+        fmt::println("[planner] IK fail: pickL_safe");
+        return false;
+    }
+
+    if (!cartToq(cfg::kPickU.x, cfg::kPickU.y, cfg::kSafeZ, cfg::kPickU.r_deg, q_pickU_safe)) {
+        fmt::println("[planner] IK fail: pickU_safe");
+        return false;
+    }
+
     if (!cartToq(cfg::kPlace.x, cfg::kPlace.y, cfg::kPlace.z, cfg::kPlace.r_deg, q_place)) {
         fmt::println("[planner] IK fail: place");
         return false;
     }
+
     if (!cartToq(cfg::kPlace.x, cfg::kPlace.y, cfg::kSafeZ, cfg::kPlace.r_deg, q_place_safe)) {
         fmt::println("[planner] IK fail: place_safe");
         return false;
     }
-
-    _lu_path = {
+    // 根据下上料实际情况组装路径，实测这段路径的执行时间在90s左右
+    _bl_path = {
+        // q_home,
+        q_place_safe,
         q_place,
+        /*Dwell,*/
         q_place_safe,
-        q_pick_safe,
-        q_pick,
-        q_pick_safe,
+        q_pickU_safe,
+        q_pickU,
+        /*Dwell,*/
+        q_pickL_safe,
+        q_pickL,
+        /*Dwell,*/
+        q_pickL_safe,
         q_place_safe,
-        q_place};
+        q_place,
+        /*Dwell,*/
+        q_place_safe,
+        // q_home
+    };
+
+    _dwelling = false;
+    _dwell_ticks_left = 0;
+    _dwell_q = {0.0, 0.0, 0.0, 0.0};
 
     _seg_idx = 0;
     startBLSegment(_seg_idx);
@@ -46,8 +86,8 @@ void ScaraPlanner::startBLSegment(size_t seg_idx) {
     for (int i = 0; i < 4; ++i) {
         auto &tp = robomotion.trajectoryplanners[i];
         // 设置当前段轨迹的起点状态和终点状态，期望速度和加速度都为0
-        StatePoint s0{_lu_path[seg_idx][i], 0.0, 0.0};
-        StatePoint sf{_lu_path[seg_idx + 1][i], 0.0, 0.0};
+        StatePoint s0{_bl_path[seg_idx][i], 0.0, 0.0};
+        StatePoint sf{_bl_path[seg_idx + 1][i], 0.0, 0.0};
 
         tp.setStartState(s0);
         tp.setTarget(sf);
@@ -63,10 +103,16 @@ void ScaraPlanner::startBLSegment(size_t seg_idx) {
     当前段计算完成后，段号加1，然后开启下一段：startSegment   */
 std::array<double, 4> ScaraPlanner::sampleBLNextQ() {
 
-    if (_seg_idx + 1 >= _lu_path.size()) {
-        _running.store(false, std::memory_order_relaxed);
-        _task_mode = TaskMode::Idle;
-        return _lu_path.back(); // 保持在最后一个路径点
+    if (_dwelling) {
+        if (_dwell_ticks_left > 0) {
+            --_dwell_ticks_left;
+            return _dwell_q;
+        }
+        _dwelling = false;
+    }
+
+    if (_seg_idx + 1 >= _bl_path.size()) {
+        return _bl_path.back(); // 保持在最后一个路径点
     } // 检查是否已经完成所有轨迹段的执行
 
     std::array<double, 4> q{};
@@ -85,11 +131,19 @@ std::array<double, 4> ScaraPlanner::sampleBLNextQ() {
     // 如果是，则认为当前段轨迹执行完成，进入下一段轨迹
     if (done) {
         _seg_idx++;
-        if (_seg_idx + 1 < _lu_path.size()) {
+
+        // 到达工艺点后先停 3s，再继续下一段
+        if (_seg_idx == 2 || _seg_idx == 5 || _seg_idx == 7 || _seg_idx == 10) {
+            _dwelling = true;
+            _dwell_ticks_left = static_cast<int>(cfg::kWorkDwell / cfg::kPubPeriod);
+            _dwell_q = _bl_path[_seg_idx];
+        }
+
+        if (_seg_idx + 1 < _bl_path.size()) {
             startBLSegment(_seg_idx);
         } else {
             // 所有段都执行完成，停止运行
-            _running.store(false, std::memory_order_relaxed);
+            _running = false;
             _task_mode = TaskMode::Idle;
         }
     }

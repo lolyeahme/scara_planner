@@ -72,43 +72,47 @@ constexpr int toInt(AxisIndex a) noexcept {
 #define AXIS_R_CSP 2000
 #define AXIS_P_CSP 3000
 
-#define L1_LENGTH 349.5 // 杆1长度
-#define L2_LENGTH 234.8 // 杆2长度
-#define LZ_RES 0.0      // 单位设定，coordination输入量转motionmap
+#define L1_LENGTH 250 // 杆1长度
+#define L2_LENGTH 250 // 杆2长度
+#define LZ_RES 1      // 单位设定，coordination输入量转motionmap
 /////////////////////////////////// 编码特值///////////////////////////////////
 enum HomePostion : int32_t {
-    RX_HOME_POSITION = -440000,
-    RY_HOME_POSITION = 920000,
-    ZU_HOME_POSITION = 2500000, // 2488978
+    RX_HOME_POSITION = 0,
+    RY_HOME_POSITION = 0,
+    ZU_HOME_POSITION = 0, // 2488978
     ZP_HOME_POSITION = 0,
 };
 
 //! ZU ZP按理来说不存在极限位置，应该按实际位置进行限制
 enum PostionMaxLimit : int32_t {
-    RX_MAX_POSITION = -40000,  //-39643
-    RY_MAX_POSITION = 1450000, // 1442733
+    RX_MAX_POSITION = 2147483647,
+    // -40000,   //-39643
+    RY_MAX_POSITION = 2147483647,
+    // 1450000,     //1442733
     ZU_MAX_POSITION = 2147483647,
     ZP_MAX_POSITION = 2147483647,
 };
 
 enum PostionMinLimit : int32_t {
-    RX_MIN_POSITION = -531460, //-531460
-    RY_MIN_POSITION = 600000,  // 578574
+    RX_MIN_POSITION = -2147483647,
+    // -531460, //-531460
+    RY_MIN_POSITION = -2147483647,
+    // 600000,  //578574
     ZU_MIN_POSITION = -2147483647,
     ZP_MIN_POSITION = -2147483647,
 };
 
 enum ZeroPosition : int32_t {
-    RX_ZERO_POSITION = -440000, //-443079
-    RY_ZERO_POSITION = 920000,
-    ZU_ZERO_POSITION = 2500000,
+    RX_ZERO_POSITION = 900000,
+    RY_ZERO_POSITION = 0,
+    ZU_ZERO_POSITION = 0,
     ZP_ZERO_POSITION = 0,
 };
 
 // 末端正转位置上升
 enum Direction : int8_t {
-    RX_Direction = 1,  // X轴正转X角增大
-    RY_Direction = 1,  // y轴正转y角增大
+    RX_Direction = -1, // X轴逆转X角增大
+    RY_Direction = -1, // y轴逆转y角增大
     ZU_Direction = -1, // u轴正转末端下降 末端逆时针
     ZP_Direction = 1,  // z轴正转末端上升
 };
@@ -389,8 +393,7 @@ public:
     Pulse inverse_kinematics_unitToPulse_csp(const Coordination &coodination, const Pulse &cur_p) const;
 
     std::vector<int8_t> limitCompare(const Pulse &pulses) const;
-
-    // 获取L1,L2,LZ 的接口
+    // 获取L1 L2 LZ
     double getL1() const { return L1; }
     double getL2() const { return L2; }
     double getLZ() const { return LZ; }

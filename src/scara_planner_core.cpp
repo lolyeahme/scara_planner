@@ -10,14 +10,14 @@ ScaraPlanner::ScaraPlanner(std::string_view name, rm::OpcuaClient &exec)
 
     // 注册 OPC UA 方法
     installOpcuaMethods();
+    installOpcuaData();
 
     // LPSS publisher：发布目标关节
     _tar_pub = this->createPublisher<rm::msg::JointState>(cfg::kTarJointsTopic);
 
     _pub_timer = this->createTimer(cfg::kPubPeriod, [this]() {
-        if (!_running.load(std::memory_order_relaxed))
+        if (!_running)
             return;
-
         switch (_task_mode) {
         case TaskMode::Idle:
             return;
@@ -28,15 +28,12 @@ ScaraPlanner::ScaraPlanner(std::string_view name, rm::OpcuaClient &exec)
             _q_cmd = sampleTRTNextQ();
             break;
         }
-
         publishQCmd(_q_cmd);
     });
 
     // OPC UA server：处理 OPC UA 请求
     // 当发布周期为10ms时，使用这种写法，线程不会卡住，
-    _opcua_timer = this->createTimer(cfg::kOpcuaPumpPeriod, [this]() { 
-        fmt::println("[planner] pump OPC UA server");
-        _srv.spinOnce(); });
+    _opcua_timer = this->createTimer(cfg::kOpcuaPumpPeriod, [this]() { _srv.spinOnce(); });
     // 但是当发布频率很高时，上述写法导致线程卡死，就要单独开一个线程
     // _opcua_thread = std::jthread([this](std::stop_token st) {
     //     while (!st.stop_requested()) {
@@ -50,7 +47,7 @@ void ScaraPlanner::installOpcuaMethods() {
     // Start：切 CSP + 开始发布
     rm::Method startBL_m = [this](const rm::NodeId &, const rm::Variables &) {
         // 1、如果当前有别的任务在执行，则拒绝启动body_load，并返回false
-        if (_running.load(std::memory_order_relaxed)) {
+        if (_running) {
             fmt::println("[planner] warning: another task is running, cannot start {}", cfg::kLuStartBrowse);
             return std::make_pair(false, rm::Variables{});
         }
@@ -67,9 +64,8 @@ void ScaraPlanner::installOpcuaMethods() {
         }
 
         _task_mode = TaskMode::BodyLoad;
-
         bool ok = ok_follow && ok_traj;
-        _running.store(ok, std::memory_order_relaxed);
+        _running = ok;
         fmt::println("[planner] {}_start -> running={}", cfg::kLuStartBrowse, ok);
         return std::make_pair(ok, rm::Variables{});
     };
@@ -81,7 +77,7 @@ void ScaraPlanner::installOpcuaMethods() {
 
     rm::Method startTRT_m = [this](const rm::NodeId &, const rm::Variables &) {
         // 1、如果当前有别的任务在执行，则拒绝启动thread_ring_tighten，并返回false
-        if (_running.load(std::memory_order_relaxed)) {
+        if (_running) {
             fmt::println("[planner] warning: another task is running, cannot start {}", cfg::kTRTStartBrowse);
             return std::make_pair(false, rm::Variables{});
         }
@@ -98,9 +94,8 @@ void ScaraPlanner::installOpcuaMethods() {
         }
 
         _task_mode = TaskMode::ThreadRingTighten;
-
         bool ok = ok_follow && ok_traj;
-        _running.store(ok, std::memory_order_relaxed);
+        _running = ok;
         fmt::println("[planner] {}_start -> running={}", cfg::kTRTStartBrowse, ok);
         return std::make_pair(ok, rm::Variables{});
     };
@@ -111,6 +106,25 @@ void ScaraPlanner::installOpcuaMethods() {
     _srv.addMethodNode(startTRT_m);
 }
 
+void ScaraPlanner::installOpcuaData() {
+    rm::DataSourceVariable task_running_node;
+
+    task_running_node.browse_name = std::string(cfg::kRunningVarBrowse);
+    task_running_node.display_name = std::string(cfg::kRunningVarDisp);
+    task_running_node.description = std::string(cfg::kRunningVarDesc);
+    // 只读
+    task_running_node.access_level = rm::VARIABLE_READ;
+
+    task_running_node.on_read = [this](const rm::NodeId &) {
+        return rm::Variable(_running);
+    };
+
+    auto nd = _srv.addDataSourceVariableNode(task_running_node);
+    fmt::println("[planner] running node registered,empty={}", nd.empty());
+}
+
+// opc ua节点的赋值方法
+
 // 设置 CSP 跟随模式
 bool ScaraPlanner::enableCspFollow() {
     auto [res, out] = _exec.callx("set_follow", cfg::kFollowCsp);
@@ -118,7 +132,7 @@ bool ScaraPlanner::enableCspFollow() {
     return res;
 }
 
-// 笛卡尔转关节空间
+// 笛卡尔转关节空间（使用已有函数）
 // bool ScaraPlanner::cartToq(double x, double y, double z, double r_deg, std::array<double, 4> &q_out) {
 
 //     Coordination coord(4);
@@ -140,8 +154,6 @@ bool ScaraPlanner::cartToq(double x, double y, double z, double r_deg, std::arra
 
     // 1. 求 θ2 (RY轴)
     double cos_q2 = (x * x + y * y - L1 * L1 - L2 * L2) / (2.0 * L1 * L2);
-
-    // 可达性检查：cos_q2 必须在 [-1, 1] 范围内
     if (cos_q2 < -1.0 || cos_q2 > 1.0)
         return false;
 
