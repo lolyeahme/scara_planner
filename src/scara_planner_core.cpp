@@ -120,7 +120,7 @@ void ScaraPlanner::installOpcuaData() {
     };
 
     auto nd = _srv.addDataSourceVariableNode(task_running_node);
-    fmt::println("[planner] running node registered,empty={}", nd.empty());
+    // fmt::println("[planner] running node registered,empty={}", nd.empty());
 }
 
 // opc ua节点的赋值方法
@@ -133,53 +133,53 @@ bool ScaraPlanner::enableCspFollow() {
 }
 
 // 笛卡尔转关节空间（使用已有函数）
-// bool ScaraPlanner::cartToq(double x, double y, double z, double r_deg, std::array<double, 4> &q_out) {
-
-//     Coordination coord(4);
-//     coord = {x, y, z, r_deg};
-//     Pulse p = robomotion.inverse_kinematics_unitToPulse(coord);
-//     if (p.empty())
-//         return false;
-//     auto qv = robomotion.motorinfo.pulsesToUnit(p);
-//     if (qv.size() < 4)
-//         return false;
-//     q_out = {qv[0], qv[1], qv[2], qv[3]};
-//     return true;
-// }
-
 bool ScaraPlanner::cartToq(double x, double y, double z, double r_deg, std::array<double, 4> &q_out) {
-    double L1 = robomotion.getL1();
-    double L2 = robomotion.getL2();
-    double LZ = robomotion.getLZ();
 
-    // 1. 求 θ2 (RY轴)
-    double cos_q2 = (x * x + y * y - L1 * L1 - L2 * L2) / (2.0 * L1 * L2);
-    if (cos_q2 < -1.0 || cos_q2 > 1.0)
+    Coordination coord(4);
+    coord = {x, y, z, r_deg};
+    Pulse p = robomotion.inverse_kinematics_unitToPulse(coord);
+    if (p.empty())
         return false;
-
-    double sin_q2 = sqrt(1.0 - cos_q2 * cos_q2);
-    q_out[1] = atan2(sin_q2, cos_q2);
-
-    // 2. 求 θ1 (RX轴)
-    double k1 = L1 + L2 * cos_q2;
-    double k2 = L2 * sin_q2;
-    q_out[0] = atan2(k1 * x - k2 * y,
-                     k1 * y + k2 * x);
-
-    // 3. 求 ZU轴 (弧度) 和 ZP轴 (mm)
-    q_out[2] = r_deg / 180.0 * PI;
-    q_out[3] = z - LZ * q_out[2] / (2.0 * PI);
-
-    // 4. 用现有函数做限位检查
-    std::vector<double> unit_vec(q_out.begin(), q_out.end());
-    auto repulse = robomotion.motorinfo.unitTorePulse(unit_vec);
-    auto pulse = robomotion.motorinfo.motionmapToPulse(repulse);
-    auto limit = robomotion.motorinfo.compareLimit(pulse);
-    bool withinLimit = std::all_of(limit.begin(), limit.end(),
-                                   [](int8_t v) { return v == 0; });
-
-    return withinLimit;
+    auto qv = robomotion.motorinfo.pulsesToUnit(p);
+    if (qv.size() < 4)
+        return false;
+    q_out = {qv[0], qv[1], qv[2], qv[3]};
+    return true;
 }
+
+// bool ScaraPlanner::cartToq(double x, double y, double z, double r_deg, std::array<double, 4> &q_out) {
+//     double L1 = robomotion.getL1();
+//     double L2 = robomotion.getL2();
+//     double LZ = robomotion.getLZ();
+
+//     // 1. 求 θ2 (RY轴)
+//     double cos_q2 = (x * x + y * y - L1 * L1 - L2 * L2) / (2.0 * L1 * L2);
+//     if (cos_q2 < -1.0 || cos_q2 > 1.0)
+//         return false;
+
+//     double sin_q2 = sqrt(1.0 - cos_q2 * cos_q2);
+//     q_out[1] = atan2(sin_q2, cos_q2);
+
+//     // 2. 求 θ1 (RX轴)
+//     double k1 = L1 + L2 * cos_q2;
+//     double k2 = L2 * sin_q2;
+//     q_out[0] = atan2(k1 * x - k2 * y,
+//                      k1 * y + k2 * x);
+
+//     // 3. 求 ZU轴 (弧度) 和 ZP轴 (mm)
+//     q_out[2] = r_deg / 180.0 * PI;
+//     q_out[3] = z - LZ * q_out[2] / (2.0 * PI);
+
+//     // 4. 用现有函数做限位检查
+//     std::vector<double> unit_vec(q_out.begin(), q_out.end());
+//     auto repulse = robomotion.motorinfo.unitTorePulse(unit_vec);
+//     auto pulse = robomotion.motorinfo.motionmapToPulse(repulse);
+//     auto limit = robomotion.motorinfo.compareLimit(pulse);
+//     bool withinLimit = std::all_of(limit.begin(), limit.end(),
+//                                    [](int8_t v) { return v == 0; });
+
+//     return withinLimit;
+// }
 
 void ScaraPlanner::publishQCmd(const std::array<double, 4> &q) {
     rm::msg::JointState js;

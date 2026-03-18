@@ -17,10 +17,19 @@ bool ScaraPlanner::resetBLTraj() {
         q_pickU_safe{}, /* 下料台安全位置逆解 */
         q_place_safe{}; /* 工作台安全位置逆解 */
 
-    if (!cartToq(cfg::kHome.x, cfg::kHome.y, cfg::kHome.z, cfg::kHome.r_deg, q_home)) {
-        fmt::println("[planner] IK fail: home");
-        return false;
-    }
+    // if (!cartToq(cfg::kHome.x, cfg::kHome.y, cfg::kHome.z, cfg::kHome.r_deg, q_home)) {
+    //     fmt::println("[planner] IK fail: home");
+    //     return false;
+    // }
+    // 直接使用电机定义的 home 脉冲 -> 关节单位值
+    Pulse home_p(4);
+    home_p[0] = robomotion.motorinfo.home(AxisIndex::RX);
+    home_p[1] = robomotion.motorinfo.home(AxisIndex::RY);
+    home_p[2] = robomotion.motorinfo.home(AxisIndex::ZU);
+    home_p[3] = robomotion.motorinfo.home(AxisIndex::ZP);
+
+    auto home_qv = robomotion.motorinfo.pulsesToUnit(home_p);
+    q_home = {home_qv[0], home_qv[1], home_qv[2], home_qv[3]};
 
     if (!cartToq(cfg::kPickL.x, cfg::kPickL.y, cfg::kPickL.z, cfg::kPickL.r_deg, q_pickL)) {
         fmt::println("[planner] IK fail: pickL");
@@ -53,7 +62,7 @@ bool ScaraPlanner::resetBLTraj() {
     }
     // 根据下上料实际情况组装路径，实测这段路径的执行时间在90s左右
     _bl_path = {
-        // q_home,
+        q_home,
         q_place_safe,
         q_place,
         /*Dwell,*/
@@ -69,8 +78,7 @@ bool ScaraPlanner::resetBLTraj() {
         q_place,
         /*Dwell,*/
         q_place_safe,
-        // q_home
-    };
+        q_home};
 
     _dwelling = false;
     _dwell_ticks_left = 0;

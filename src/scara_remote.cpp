@@ -26,13 +26,13 @@ int main(int argc, char **argv) {
     }
 
     if (cmd == "body_load") {
-        auto [ok, out] = cli.callx("body_load", rm::Variables{});
+        auto [ok, out] = cli.callx("body_load");
         fmt::println("[remote] call body_load -> {}", ok ? "OK" : "FAIL");
         return ok ? 0 : 3;
     }
 
     if (cmd == "thread_ring_tighten") {
-        auto [ok, out] = cli.callx("thread_ring_tighten", rm::Variables{});
+        auto [ok, out] = cli.callx("thread_ring_tighten");
         fmt::println("[remote] call thread_ring_tighten -> {}", ok ? "OK" : "FAIL");
         return ok ? 0 : 3;
     }

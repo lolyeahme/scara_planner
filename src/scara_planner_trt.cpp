@@ -21,6 +21,14 @@ void ScaraPlanner::startTRTSegment(size_t seg_idx) {
 
 bool ScaraPlanner::resetTRTTraj() {
     std::array<double, 4> q_tighten{}, q_home{}, q_tighten_safe{};
+    Pulse home_p(4);
+    home_p[0] = robomotion.motorinfo.home(AxisIndex::RX);
+    home_p[1] = robomotion.motorinfo.home(AxisIndex::RY);
+    home_p[2] = robomotion.motorinfo.home(AxisIndex::ZU);
+    home_p[3] = robomotion.motorinfo.home(AxisIndex::ZP);
+
+    auto home_qv = robomotion.motorinfo.pulsesToUnit(home_p);
+    q_home = {home_qv[0], home_qv[1], home_qv[2], home_qv[3]};
 
     if (!cartToq(cfg::kHome.x, cfg::kHome.y, cfg::kHome.z, cfg::kHome.r_deg, q_home)) {
         fmt::println("[planner] IK fail: home");
@@ -38,12 +46,11 @@ bool ScaraPlanner::resetTRTTraj() {
     }
 
     _trt_path = {
-        // q_home,
+        q_home,
         q_tighten_safe,
         q_tighten, /*dwell*/
         q_tighten_safe,
-        // q_home
-    };
+        q_home};
     _dwelling = false;
     _dwell_ticks_left = 0;
     _dwell_q = {0.0, 0.0, 0.0, 0.0};
